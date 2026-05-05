@@ -794,10 +794,12 @@ let viewMode={income:'list',expense:'list'};
 let expandedGroups={income:new Set(),expense:new Set()};
 
 function daysInMonth(y,m){return new Date(y,m+1,0).getDate()}
-function todayDay(){
+function defaultDay(){
   const now=new Date();
-  if(now.getFullYear()===currentYear&&now.getMonth()===currentMonth) return now.getDate();
-  return 1;
+  const isCurrentMonth=now.getFullYear()===currentYear&&now.getMonth()===currentMonth;
+  if(isCurrentMonth) return now.getDate();
+  // Past/future month → last day of that month (most recent)
+  return daysInMonth(currentYear,currentMonth);
 }
 
 function cfg(){return{headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json','Prefer':'return=representation'}}}
@@ -829,7 +831,7 @@ async function loadItems(){
   setSync('syncing','');
   showLoading(true);
   try{
-    const rows=await sbFetch('GET',`budget_items?sync_key=eq.${encodeURIComponent(SYNC_KEY)}&year=eq.${currentYear}&month=eq.${currentMonth}&select=*&order=created_at.asc`);
+    const rows=await sbFetch('GET',`budget_items?sync_key=eq.${encodeURIComponent(SYNC_KEY)}&year=eq.${currentYear}&month=eq.${currentMonth}&select=*&order=day.desc,created_at.desc`);
     items.income=rows.filter(r=>r.type==='income');
     items.expense=rows.filter(r=>r.type==='expense');
     setSync('online','');
@@ -888,7 +890,7 @@ function renderList(type,list){
     return;
   }
 
-  // list mode (default)
+  // list mode — latest day first, then latest created_at first
   const sorted=[...list].sort((a,b)=>{
     const dA=a.day||1, dB=b.day||1;
     if(dA!==dB) return dB-dA;
@@ -1150,7 +1152,7 @@ function openModal(type,itemId){
   let dayOpts='';
   for(let d=1;d<=maxDay;d++) dayOpts+=`<option value="${d}">วันที่ ${d}</option>`;
   daySel.innerHTML=dayOpts;
-  daySel.value=todayDay();
+  daySel.value=defaultDay();
   if(itemId){
     const all=[...items.income,...items.expense];
     const item=all.find(x=>x.id===itemId);
@@ -1223,7 +1225,7 @@ async function deleteItem(id,type){
   renderAll();
   showToast(`ลบ "${item.name}" แล้ว`, 'info', async()=>{
     items[type].push(item);
-    items[type].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+    items[type].sort((a,b)=>{const dA=a.day||1,dB=b.day||1;if(dA!==dB)return dB-dA;return new Date(b.created_at)-new Date(a.created_at)});
     renderAll();
   }, 5000);
   try{
@@ -1413,7 +1415,7 @@ async function quickAdd(evt,id,type){
   chip.style.opacity='.5';
   chip.style.pointerEvents='none';
   try{
-    const newItem=await addItem(type,{name:t.name,amount:t.amount,category:t.category,note:t.note||'',day:todayDay()});
+    const newItem=await addItem(type,{name:t.name,amount:t.amount,category:t.category,note:t.note||'',day:defaultDay()});
     items[type].push(newItem);
     renderAll();
     showToast(`+ ${t.name} ${fmtMoney(t.amount)}`, 'success');

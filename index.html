@@ -255,6 +255,15 @@ body{font-family:'Sarabun','SF Pro Text',system-ui,-apple-system,sans-serif;back
 .form-input.big{font-size:22px;font-weight:600;letter-spacing:-0.374px;padding:9px 11px}
 .form-textarea{resize:vertical;min-height:52px}
 .form-hint{font-size:11px;color:var(--ink-48);margin-top:4px;letter-spacing:-0.12px}
+
+/* DAY SHORTCUT CHIPS */
+.day-shortcuts{display:flex;gap:6px;margin-bottom:8px}
+.day-chip{flex:1;padding:7px 4px;border-radius:var(--radius-sm);font-size:13px;font-weight:400;font-family:inherit;cursor:pointer;border:1px solid var(--hairline);background:var(--canvas-parchment);color:var(--ink-48);transition:all .12s;text-align:center;letter-spacing:-0.12px}
+.day-chip.active{background:var(--primary);color:#fff;border-color:var(--primary);font-weight:500}
+.day-chip:hover:not(.active){background:var(--divider);color:var(--ink)}
+.day-chip:active{transform:scale(.96)}
+.day-custom{display:none;margin-top:6px}
+.day-custom.show{display:block}
 .modal-footer{padding:10px 16px;border-top:1px solid var(--divider);display:flex;gap:6px;justify-content:flex-end}
 .btn{padding:8px 16px;border-radius:var(--radius-pill);font-size:14px;font-weight:400;font-family:inherit;cursor:pointer;border:none;transition:all .15s;display:flex;align-items:center;gap:5px;letter-spacing:-0.224px;min-height:36px;white-space:nowrap}
 .btn:disabled{opacity:.4;cursor:not-allowed}
@@ -625,7 +634,15 @@ body{font-family:'Sarabun','SF Pro Text',system-ui,-apple-system,sans-serif;back
       </div>
       <div class="form-group">
         <label class="form-label">วันที่</label>
-        <select class="form-select" id="itemDay"></select>
+        <div class="day-shortcuts" id="dayShortcuts">
+          <button type="button" class="day-chip" data-shortcut="today" onclick="selectDayShortcut('today')">วันนี้</button>
+          <button type="button" class="day-chip" data-shortcut="yesterday" onclick="selectDayShortcut('yesterday')">เมื่อวาน</button>
+          <button type="button" class="day-chip" data-shortcut="custom" onclick="selectDayShortcut('custom')">เลือกวัน</button>
+        </div>
+        <div class="day-custom" id="dayCustomWrap">
+          <select class="form-select" id="itemDay"></select>
+        </div>
+        <div style="font-size:12px;color:var(--ink-48);margin-top:4px" id="dayLabel"></div>
       </div>
       <div class="form-group">
         <label class="form-label">หมวดหมู่</label>
@@ -793,6 +810,43 @@ let isConnected=false;
 let viewMode={income:'list',expense:'list'};
 let expandedGroups={income:new Set(),expense:new Set()};
 
+// Sticky session state — remember last used day+category per type
+let lastUsed={
+  income:{dayShortcut:'today',customDay:null,category:''},
+  expense:{dayShortcut:'today',customDay:null,category:''}
+};
+
+function selectDayShortcut(shortcut){
+  document.querySelectorAll('.day-chip').forEach(c=>c.classList.toggle('active',c.dataset.shortcut===shortcut));
+  const customWrap=document.getElementById('dayCustomWrap');
+  customWrap.classList.toggle('show',shortcut==='custom');
+  updateDayLabel(shortcut);
+  const type=document.getElementById('modalType').value;
+  lastUsed[type].dayShortcut=shortcut;
+}
+
+function updateDayLabel(shortcut){
+  const lbl=document.getElementById('dayLabel');
+  if(shortcut==='today'){
+    lbl.textContent=`วันที่ ${defaultDay()} ${MONTH_TH[currentMonth]} ${currentYear+543}`;
+  }else if(shortcut==='yesterday'){
+    const prev=defaultDay()-1;
+    if(prev<1){lbl.textContent='วันสุดท้ายของเดือนก่อน'}
+    else{lbl.textContent=`วันที่ ${prev} ${MONTH_TH[currentMonth]} ${currentYear+543}`;}
+  }else{
+    lbl.textContent='';
+  }
+}
+
+function getSelectedDay(){
+  const shortcut=document.querySelector('.day-chip.active')?.dataset.shortcut||'today';
+  if(shortcut==='today') return defaultDay();
+  if(shortcut==='yesterday'){
+    const prev=defaultDay()-1;
+    return prev<1?daysInMonth(currentYear,currentMonth):prev;
+  }
+  return parseInt(document.getElementById('itemDay').value)||defaultDay();
+}
 function daysInMonth(y,m){return new Date(y,m+1,0).getDate()}
 function defaultDay(){
   const now=new Date();
@@ -1146,14 +1200,16 @@ function openModal(type,itemId){
   btn.textContent=itemId?'บันทึกการแก้ไข':`+ บันทึก`;
   const cats=isIncome?INCOME_CATS:EXPENSE_CATS;
   document.getElementById('itemCategory').innerHTML=`<option value="">— เลือกหมวดหมู่ —</option>`+cats.map(c=>`<option value="${c}">${c}</option>`).join('');
-  // Populate day dropdown
+
+  // Populate day dropdown for custom
   const maxDay=daysInMonth(currentYear,currentMonth);
   const daySel=document.getElementById('itemDay');
   let dayOpts='';
   for(let d=1;d<=maxDay;d++) dayOpts+=`<option value="${d}">วันที่ ${d}</option>`;
   daySel.innerHTML=dayOpts;
-  daySel.value=defaultDay();
+
   if(itemId){
+    // Editing — show actual day, use custom shortcut
     const all=[...items.income,...items.expense];
     const item=all.find(x=>x.id===itemId);
     if(item){
@@ -1161,13 +1217,25 @@ function openModal(type,itemId){
       document.getElementById('itemAmount').value=item.amount;
       document.getElementById('itemCategory').value=item.category||'';
       document.getElementById('itemNote').value=item.note||'';
+      daySel.value=item.day||1;
+      // Always show custom when editing
+      selectDayShortcut('custom');
       document.getElementById('itemDay').value=item.day||1;
     }
   }else{
     document.getElementById('itemName').value='';
     document.getElementById('itemAmount').value='';
-    document.getElementById('itemCategory').value='';
     document.getElementById('itemNote').value='';
+    // Restore sticky state
+    const sticky=lastUsed[type];
+    document.getElementById('itemCategory').value=sticky.category||'';
+    const shortcut=sticky.dayShortcut||'today';
+    if(shortcut==='custom'&&sticky.customDay){
+      daySel.value=sticky.customDay;
+    }else{
+      daySel.value=defaultDay();
+    }
+    selectDayShortcut(shortcut);
   }
   document.getElementById('saveAsQuick').checked=false;
   document.getElementById('saveQuickRow').style.display=itemId?'none':'flex';
@@ -1186,7 +1254,7 @@ async function saveItem(){
   const amount=parseFloat(document.getElementById('itemAmount').value);
   const category=document.getElementById('itemCategory').value;
   const note=document.getElementById('itemNote').value.trim();
-  const day=parseInt(document.getElementById('itemDay').value)||1;
+  const day=getSelectedDay();
   const editId=document.getElementById('editId').value;
   const saveAsQuick=document.getElementById('saveAsQuick').checked;
   if(!name){showToast('กรุณากรอกชื่อรายการ','error');document.getElementById('itemName').focus();return}
@@ -1203,6 +1271,13 @@ async function saveItem(){
       const newItem=await addItem(type,{name,amount,category,note,day});
       items[type].push(newItem);
       if(saveAsQuick) addTemplate(type,{name,amount,category,note});
+      // Save sticky state for next entry
+      const shortcut=document.querySelector('.day-chip.active')?.dataset.shortcut||'today';
+      lastUsed[type]={
+        dayShortcut:shortcut,
+        customDay:shortcut==='custom'?day:null,
+        category:category
+      };
     }
     closeModal('modalOverlay');
     renderAll();
